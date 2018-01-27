@@ -1,0 +1,214 @@
+# Primecoin All-In-One EZ Setup Script
+# Hacked together by GigaWatt
+# Donations welcome!
+#   BTC: 1E2egHUcLDAmcxcqZqpL18TPLx9Xj1akcV
+#   XPM: AWHJbwoM67Ez12SHH4pH5DnJKPoMSdvLz2
+# Last Update: 27 August, 2013
+
+{
+# PUT YOUR SETTINGS HERE
+PRIMECOIN_USERNAME=""
+PRIMECOIN_SIEVESIZE="1000000" # Default: 1000000
+PRIMECOIN_SIEVEPCT="10"       # Default: 10
+PRIMECOIN_SIEVEEXTENSIONS="6" # Default: 6
+
+if [[ -z "${PRIMECOIN_USERNAME}" ]]; then
+    echo "You need to supply a primecoin username"
+    exit 1
+fi
+
+
+# Build swapfile
+if [[ ! -f /swapfile ]]; then
+    echo "Building swapfile..."
+    sudo dd if=/dev/zero of=/swapfile bs=64M count=16
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    
+    # Mount on reboot
+    if [[ -z "$(cat /etc/fstab | grep swapfile)" ]]; then
+        echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab > /dev/null 2>&1
+    fi
+fi
+
+
+# Auto reboot on kernel panic
+if [[ -z "$(cat /etc/sysctl.conf | grep '^kernel.panic')" ]]; then
+    echo "kernel.panic=3" | sudo tee /etc/sysctl.conf >/dev/null 2>&1
+fi
+
+
+echo "Installing libraries..."
+sudo apt-get update
+sudo apt-get install build-essential bc cpulimit curl dos2unix fail2ban git haveged libboost-all-dev libdb++-dev libminiupnpc-dev libssl-dev m4 nano -y
+
+# Install GMP
+cd ~/
+rm -rf gmp-5.1.2.tar.bz2 gmp-5.1.2
+wget http://mirrors.kernel.org/gnu/gmp/gmp-5.1.2.tar.bz2
+tar xjvf gmp-5.1.2.tar.bz2
+cd gmp-5.1.2
+./configure --enable-cxx
+make
+sudo make install
+rm -rf gmp-5.1.2.tar.bz2 gmp-5.1.2
+cd ~/
+
+# Enable HAVEGED for entropy
+sudo update-rc.d haveged defaults
+sudo service haveged restart
+
+
+echo "Downloading and building primecoin..."
+cat << "SCRIPT" > ~/build-primecoin
+#!/bin/bash
+[[ -f ~/stop-primecoind ]] && ./stop-primecoind
+rm ~/primecoin*.tar.bz2
+rm -rf ~/primecoin*
+wget http://sourceforge.net/projects/primecoin-hp/files/latest/download -O ~/primecoin.tar.bz2
+tar xjvf ~/primecoin.tar.bz2
+rm ~/primecoin.tar.bz2
+cd ~/primecoin*/src
+sed -i -e 's/$(OPENSSL_INCLUDE_PATH))/$(OPENSSL_INCLUDE_PATH) \/usr\/local\/include)/' makefile.unix
+sed -i -e 's/$(OPENSSL_LIB_PATH))/$(OPENSSL_LIB_PATH) \/usr\/local\/lib)/' makefile.unix
+sed -i -e 's/$(LDHARDENING) $(LDFLAGS)/$(LDHARDENING) -Wl,-rpath,\/usr\/local\/lib $(LDFLAGS)/' makefile.unix
+make -f makefile.unix USE_UPNP=-
+sudo cp primecoind /usr/local/bin/
+cd ~/
+SCRIPT
+chmod +x ~/build-primecoin
+~/build-primecoin
+
+
+echo "Building settings and scripts..."
+mkdir ~/.primecoin
+echo "rpcusername=${PRIMECOIN_USERNAME}
+rpcpassword=$(cat /dev/urandom | tr -cd '[:alnum:]' | head -c32)
+addnode=primeseed.muuttuja.org
+sievesize=${PRIMECOIN_SIEVESIZE}
+sievepercentage=${PRIMECOIN_SIEVEPCT}
+sieveextensions=${PRIMECOIN_SIEVEEXTENSIONS}
+gen=1" > ~/.primecoin/primecoin.conf
+
+
+# Notification scripts
+cat << "SCRIPT" > ~/notify-block
+#!/bin/bash
+# YOUR SCRIPT HERE
+SCRIPT
+chmod +x ~/notify-block
+
+cat << "SCRIPT" > ~/notify-wallet
+#!/bin/bash
+# YOUR SCRIPT HERE
+
+# Example - Backup wallet.dat
+#cp ~/.primecoin/wallet.dat ~/${HOSTNAME}.bak
+
+# Example - Backup wallet with FTP
+#curl -T ~/${HOSTNAME}.bak ftp://somesite.com --user ftp_username:ftp_password
+SCRIPT
+chmod +x ~/notify-wallet
+
+
+# Watchdog runner
+cat << "SCRIPT" > ~/start-primecoind
+#!/bin/bash
+export PATH="/usr/local/bin:$PATH"
+echo Starting primecoind
+[[ -n "$(pidof primecoind)" ]] && killall --older-than 60s -q start-primecoind primecoind
+function background_loop
+    while :; do
+        /usr/local/bin/primecoind -blocknotify="~/notify-block" -walletnotify="~/notify-wallet" >/dev/null 2>&1
+        sleep 5
+        date >> ~/crash.log
+    done
+background_loop &
+SCRIPT
+chmod +x ~/start-primecoind
+~/start-primecoind
+
+
+# Add to startup
+mkdir /var/spool/cron/crontabs/ > /dev/null 2>&1
+echo "@reboot ${HOME}/start-primecoind" | sudo tee    /var/spool/cron/crontabs/$(whoami) > /dev/null 2>&1
+echo ""                                 | sudo tee -a /var/spool/cron/crontabs/$(whoami) > /dev/null 2>&1
+sudo chmod 0600 /var/spool/cron/crontabs/$(whoami)
+sudo update-rc.d cron defaults
+
+
+# Watchdog stopper
+cat << "SCRIPT" > ~/stop-primecoind
+#!/bin/bash
+killall -q start-primecoind
+primecoind stop
+rm ~/.primecoin/debug.log
+sleep 3
+[[ -n "$(pidof primecoind)" ]] && killall primecoind
+SCRIPT
+chmod +x ~/stop-primecoind
+
+# Watchdog restarter
+cat << "SCRIPT" > ~/restart-primecoind
+#!/bin/bash
+~/stop-primecoind
+~/start-primecoind
+SCRIPT
+chmod +x ~/restart-primecoind
+
+# Peek at status
+cat << "SCRIPT" > ~/peek
+#!/bin/bash
+conf=$(primecoind getbalance)
+unconf=$(primecoind getbalance '' 1)
+immature=$(echo "scale=4;${unconf} - ${conf}" | bc)
+echo "Stats: $(primecoind getmininginfo)"
+echo "Confirmed Balance:  ${conf}"
+echo "Immature Balance:   ${immature}"
+echo "Immature TX: $(primecoind listtransactions "" 99999 | grep immature | wc -l)"
+echo "Connections: $(primecoind getconnectioncount)"
+echo "Recent:"
+grep primemeter ~/.primecoin/debug.log | tail -5
+echo ""
+echo "Averages:"
+grep primemeter ~/.primecoin/debug.log | \
+    awk '{s1+=$4;s2+=$6;s3+=$8;s4+=$10} END {printf"%10s: %10d\n%10s: %10d\n%10s: %10d\n%10s: %10.5f\n","Prime/h",s1/NR,"Test/h",s2/NR,"5-Chain/h",s3/NR,"Chains/day",s4/NR}'
+SCRIPT
+chmod +x ~/peek
+
+
+# Dump address info
+cat << "SCRIPT" > ~/myinfo
+#!/bin/bash
+for addr in $(primecoind listtransactions "" 99999 | grep -C 1 '"generate"\|"receive"' | grep --color=never -o "\b[A-Za-z0-9]\{33,36\}\b" | sort -u); do
+    echo Address: ${addr}
+    echo PrivKey: $(primecoind dumpprivkey ${addr})
+    echo
+done
+SCRIPT
+chmod +x ~/myinfo
+
+
+# Edit primecoin config file
+cat << "SCRIPT" > ~/config
+#!/bin/bash
+nano ~/.primecoin/primecoin.conf
+~/stop-primecoind
+~/start-primecoind
+SCRIPT
+chmod +x ~/config
+
+
+echo
+echo
+echo '=========================================================='
+echo 'All Done!'
+echo 'primecoind should be up and running'
+echo
+echo 'Run ~/start-primecoind  to start primecoind and begin mining'
+echo 'Run ~/stop-primecoind   to stop primecoind and stop mining'
+echo 'Run ~/build-primecoin   to update and rebuild primecoind'
+echo 'Run ~/config            to modify your primecoind config file'
+echo 'Run ~/peek              to check on your mining status'
+echo 'Run ~/myinfo            to view your primecoin address and privkey'
+}
