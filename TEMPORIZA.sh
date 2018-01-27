@@ -4,10 +4,10 @@
 #########################
 
 START() {
-	#printf "Download do arquivo:\nm-minerd-64-linux.tar.gz\n"
-	#git clone https://github.com/wolf9466/cpuminer-multi
-	#printf "Download finalizado\nDescompactando . . .\n\n"
-	#tar -xzvf m-minerd-64-linux.tar.gz
+	printf "Download do arquivo:\nm-minerd-64-linux.tar.gz\n"
+	git clone https://github.com/wolf9466/cpuminer-multi
+	printf "Download finalizado\nDescompactando . . .\n\n"
+	tar -xzvf m-minerd-64-linux.tar.gz
 	printf "\nDescompactado.\nMovendo:\nm-minerd\nm-minerd.sh Para a pasta $PWD\nDando permissao de execuçao para \"minerd.sh\"\n"
 	mv cpuminer-multi/minerd minerd
 	mv cpuminer-multi/minerd.sh minerd.sh
