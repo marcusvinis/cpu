@@ -6,10 +6,12 @@
 START() {
 	printf "Download do arquivo:\nm-minerd-64-linux.tar.gz\n"
 	#caso tiver baixado o cpuminer comentar a linha abaixo
-	git clone https://github.com/wolf9466/cpuminer-multi
-	printf "Download finalizado\nDescompactando . . .\n\n"
-	tar -xzvf m-minerd-64-linux.tar.gz
-	printf "\nDescompactado.\nMovendo:\nm-minerd\nm-minerd.sh Para a pasta $PWD\nDando permissao de execuçao para \"minerd.sh\"\n"
+	sudo apt-get install git
+	sudo apt-get install build-essential autotools-dev autoconf libcurl3 libcurl4-gnutls-dev
+	git clone https://github.com/OhGodAPet/cpuminer-multi
+	printf "Download finalizado!\n . . .\n\n"
+	#tar -xzvf m-minerd-64-linux.tar.gz
+	printf "\nMovendo:\nm-minerd\nm-minerd.sh Para a pasta $PWD\nDando permissao de execuçao para \"minerd.sh\"\n"
 	mv cpuminer-multi/minerd minerd
 	mv cpuminer-multi/minerd.sh minerd.sh
 	chmod +x minerd.sh
